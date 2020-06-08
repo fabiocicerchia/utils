@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+
+import urllib.request
+import sys
+from time import time
+
+# {{{ Function: retrieve_url_content ------------------------------------------
+def retrieve_url_content(http_method, remote_url, params):
+    """Retrieve the content of an URL that could be called in two ways (GET or
+    POST) sending eventually some data.
+
+    Keyword arguments:
+    http_method    -- HTTP Method to use (GET or POST).
+    remote_url     -- The remote URL that validates the URL.
+    params         -- The param list, could be sent via GET or POST.
+
+    Return value:
+    a string, that contain the URL response."""
+
+    if (http_method == 'GET'):
+        data = urllib.request.urlopen(remote_url).read()
+    else:
+        data = urllib.request.urlopen(remote_url, params).read()
+
+    return data
+# }}} -------------------------------------------------------------------------
+
+# {{{ Function: get_execution_time --------------------------------------------
+def get_execution_time(url):
+    """Measure the execution time to fetch a URL.
+
+    Keyword arguments:
+    url -- The remote URL that validates the URL.
+
+    Return value:
+    a string, that contain the response of validation."""
+
+    start = time()
+    retrieve_url_content('GET', url, '')
+    end = time()
+
+    return (end - start)
+# }}} -------------------------------------------------------------------------
+
+# {{{ Function: get_average_execution_time ------------------------------------
+def get_average_execution_time(url):
+    """Measure 5 times the execution time to fetch a URL, then discard the best
+    and the worst and return the average.
+
+    Keyword arguments:
+    url -- The remote URL that validates the URL.
+
+    Return value:
+    a float, the average execution time."""
+
+    etime = [
+        get_execution_time(url),
+        get_execution_time(url),
+        get_execution_time(url),
+        get_execution_time(url),
+        get_execution_time(url)
+    ]
+
+    return round((sum(etime) - min(etime) - max(etime)) / 3, 5)
+# }}} -------------------------------------------------------------------------
+
+# Main ------------------------------------------------------------------------
+if __name__ == "__main__":
+    print(get_average_execution_time(sys.argv[1]), end='')
+    print(' sec')

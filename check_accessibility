@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+import urllib.request
+import re
+import sys
+import lxml.html
+
+# TODO: Use http://www.sidar.org/hera/index.php.it ?
+
+# {{{ Function: retrieve_url_content ------------------------------------------
+def retrieve_url_content(http_method, remote_url, params):
+    """Retrieve the content of an URL that could be called in two ways (GET or
+    POST) sending eventually some data.
+
+    Keyword arguments:
+    http_method    -- HTTP Method to use (GET or POST).
+    remote_url     -- The remote URL that validates the URL.
+    params         -- The param list, could be sent via GET or POST.
+
+    Return value:
+    a string, that contain the URL response."""
+
+    if (http_method == 'GET'):
+        data = urllib.request.urlopen(remote_url).read()
+    else:
+        data = urllib.request.urlopen(remote_url, params.encode('utf-8')).read()
+
+    return data
+# }}} -------------------------------------------------------------------------
+
+# {{{ Function: validate ------------------------------------------------------
+def validate(http_method, remote_url, params, page, match,
+             excepted_value='.*', match_reverse=False):
+    """Validate an URL calling the defined web site validator,
+    passing some data to it.
+
+    Keyword arguments:
+    http_method    -- HTTP Method to use (GET or POST).
+    remote_url     -- The remote URL that validates the URL.
+    params         -- The param list, could be sent via GET or POST.
+    page           -- The current page that needs validation.
+    match          -- The RegExp to match the "excepted_value" inside the HTML
+                      response.
+    excepted_value -- The excepted value to consider an answer good or not.
+    match_reverse  -- The flag that means "if the excepted value is not
+                      matched". This behavious is useful to exclude from the
+                      match, for example, an error string.
+
+    Return value:
+    a string, that contain the response of validation."""
+
+    page   = urllib.request.quote(page)
+    params = params.replace('%25URI%25', page).replace('%URI%', page)
+
+    if (http_method == 'GET'):
+        remote_url = remote_url + '%s' % params
+
+    data = retrieve_url_content(http_method, remote_url, params)
+
+    tree = lxml.html.fromstring(data)
+
+    elements = tree.xpath(match)
+    text     = ''.join(elements)
+    match    = re.match(excepted_value, text, re.DOTALL)
+
+    status = (match != None)
+
+    if (match_reverse):
+        status = not status
+
+    if status:
+        return 'OK'
+    else:
+        return 'FAIL' + ' > Check this out to: ' + remote_url
+# }}} -------------------------------------------------------------------------
+
+# Main ------------------------------------------------------------------------
+if __name__ == "__main__":
+    print('CHECK ACCESSIBILITY')
+
+    v = sys.argv[1]
+    
+    ###############################################################################
+    # Web Accessibility Validation using: BITV 1.0 - Level 2
+    ###############################################################################
+    print('Validate Accessibility (BITV 1.0 - Level 2):')
+    
+    url_param = 'uri=%URI%&validate_uri=Check It&MAX_FILE_SIZE=52428800&'
+    url_param += 'uploadfile=&pastehtml=&rpt_format=1&enable_html_validation=1'
+    url_param += '&radio_gid[]=1&checkbox_gid[]=8'
+    xpath = './/*[@id="AC_congrats_msg_for_errors"]/text()'
+    
+    res = validate('POST', 'http://achecker.ca/checker/index.php',
+                   url_param, v, xpath,
+                   '.*Congratulations! No known problems\..*')
+    
+    print(res)
+    
+    ###############################################################################
+    # Web Accessibility Validation using: Section 508
+    ###############################################################################
+    print('Validate Accessibility (Section 508):')
+    
+    url_param = 'uri=%URI%&validate_uri=Check It&MAX_FILE_SIZE=52428800&'
+    url_param += 'uploadfile=&pastehtml=&rpt_format=1&enable_html_validation=1'
+    url_param += '&radio_gid[]=2&checkbox_gid[]=8'
+    xpath = './/*[@id="AC_congrats_msg_for_errors"]/text()'
+    
+    res = validate('POST', 'http://achecker.ca/checker/index.php',
+                   url_param, v, xpath,
+                   '.*Congratulations! No known problems\..*')
+    
+    print(res)
+    
+    ###############################################################################
+    # Web Accessibility Validation using: Stanca Act
+    ###############################################################################
+    print('Validate Accessibility (Stanca Act):')
+    
+    url_param = 'uri=%URI%&validate_uri=Check It&MAX_FILE_SIZE=52428800&'
+    url_param += 'uploadfile=&pastehtml=&rpt_format=1&enable_html_validation=1'
+    url_param += '&radio_gid[]=3&checkbox_gid[]=8'
+    xpath = './/*[@id="AC_congrats_msg_for_errors"]/text()'
+    
+    res = validate('POST', 'http://achecker.ca/checker/index.php',
+                   url_param, v, xpath,
+                   '.*Congratulations! No known problems\..*')
+    
+    print(res)
+    
+    ###############################################################################
+    # Web Accessibility Validation using: WCAG 1.0 - Level AAA
+    ###############################################################################
+    print('Validate Accessibility (WCAG 1.0 - Level AAA):')
+    
+    url_param = 'uri=%URI%&validate_uri=Check It&MAX_FILE_SIZE=52428800&'
+    url_param += 'uploadfile=&pastehtml=&rpt_format=1&enable_html_validation=1'
+    url_param += '&radio_gid[]=6&checkbox_gid[]=8'
+    xpath = './/*[@id="AC_congrats_msg_for_errors"]/text()'
+    
+    res = validate('POST', 'http://achecker.ca/checker/index.php',
+                   url_param, v, xpath,
+                   '.*Congratulations! No known problems\..*')
+    
+    print(res)
+    
+    ###############################################################################
+    # Web Accessibility Validation using: WCAG 2.0 - Level AAA
+    ###############################################################################
+    print('Validate Accessibility (WCAG 2.0 - Level AAA):')
+    
+    url_param = 'uri=%URI%&validate_uri=Check It&MAX_FILE_SIZE=52428800&'
+    url_param += 'uploadfile=&pastehtml=&rpt_format=1&enable_html_validation=1'
+    url_param += '&radio_gid[]=9&checkbox_gid[]=8'
+    xpath = './/*[@id="AC_congrats_msg_for_errors"]/text()'
+    
+    res = validate('POST', 'http://achecker.ca/checker/index.php',
+                   url_param, v, xpath,
+                   '.*Congratulations! No known problems\..*')
+    
+    print(res)
