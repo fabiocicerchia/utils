@@ -1,0 +1,24 @@
+#!/bin/sh
+IS_NIX=$(which free)
+echo "Arch: $(arch)"
+if [ $IS_NIX ]; then
+    echo "CPU: $(nproc 2> /dev/null)"
+    echo "RAM: $(free -m 2> /dev/null | grep Mem | awk '{print $2}') MB"
+    echo "Swap: $(free -m 2> /dev/null | grep Swap | awk '{print $2}') MB"
+else
+    echo "CPU: $(sysctl -n hw.physicalcpu)"
+    echo "RAM: $(echo $(($(sysctl -n hw.memsize) / 1024 / 1024))) MB"
+    echo "Swap: $(sysctl vm.swapusage | awk '{print $4}' | sed 's/\..*//') MB"
+fi
+
+echo "Disk: $(df -h / | tail -n1 | awk '{print $3}')"
+echo "Avg load: $(uptime | sed 's/.*: //')"
+if [ $IS_NIX ]; then
+    echo "IP Private: $(ip addr show eth0 | grep "inet\b" | head -n1 | awk '{print $2}' | cut -d/ -f1)"
+else
+    echo "IP Private: $(ifconfig en0 | grep "inet\b" | head -n1 | awk '{print $2}' | cut -d/ -f1)"
+fi
+
+IP=$(curl -s ifconfig.me)
+echo "IP Public: $IP"
+echo "Location: $(curl -s http://ip-api.com/line/$IP?fields=country)"

@@ -1,0 +1,10 @@
+#!/bin/sh
+NIC=eth0
+if [ "$1" != "" ]; then
+    NIC=$1
+fi
+TIME=5
+if [ "$2" != "" ]; then
+    TIME=$2
+fi
+ethtool -p $NIC $TIME

@@ -1,0 +1,2 @@
+#!/bin/sh
+curl "http://ip-api.com/line/$1?fields=country,countryCode,city"

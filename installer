@@ -1,0 +1,10 @@
+#!/bin/sh
+
+mkdir /tmp/utils-installer
+cd /tmp/utils-installer
+wget https://github.com/fabiocicerchia/utils/archive/master.zip
+unzip master.zip && rm master.zip
+cd utils-master/
+rm installer *.*
+cd /tmp/utils-installer/utils-master /opt/utils-master
+echo "PATH=\$PATH:/opt/utils-master" | tee -a /etc/profile

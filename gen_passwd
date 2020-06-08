@@ -1,0 +1,6 @@
+#!/bin/sh
+LEN=16
+if [ "$1" != "" ]; then
+  LEN=$1
+fi
+head -n 1 /dev/urandom | base64 | grep -o '[[:alnum:]]' | head -n $LEN | tr -d '\n'

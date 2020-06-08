@@ -1,0 +1,3 @@
+#!/bin/sh
+TIME=$1
+date -d@$TIME 2> /dev/null || date -r $TIME
