@@ -147,6 +147,12 @@ IP Public: 123.123.123.123
 Location: Italy
 ```
 
+### `spin_container` - Launch a temp docker container
+
+```shell
+$ spin_container IMAGE [TAG=latest]
+```
+
 ### `stealth` - Disable Command History
 
 ```shell
