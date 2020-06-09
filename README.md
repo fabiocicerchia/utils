@@ -10,7 +10,7 @@
 One liner:
 
 ```shell
-wget -O- https://raw.githubusercontent.com/fabiocicerchia/utils/master/installer | sudo sh
+wget -O - https://raw.githubusercontent.com/fabiocicerchia/utils/master/installer | sudo sh
 ```
 
 ## Tools

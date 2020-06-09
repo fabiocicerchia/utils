@@ -5,6 +5,8 @@ cd /tmp/utils-installer
 wget https://github.com/fabiocicerchia/utils/archive/master.zip
 unzip master.zip && rm master.zip
 cd utils-master/
+pip3 install -r requirements.txt
 rm installer *.*
-cd /tmp/utils-installer/utils-master /opt/utils-master
-echo "PATH=\$PATH:/opt/utils-master" | tee -a /etc/profile
+cp -r /tmp/utils-installer/utils-master /opt/utils-master
+echo "PATH=\$PATH:/opt/utils-master" | tee -a /etc/paths.d/utils-master
+rm -rf /tmp/utils-installer
