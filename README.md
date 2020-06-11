@@ -147,6 +147,13 @@ IP Public: 123.123.123.123
 Location: Italy
 ```
 
+### `spider` - Launch a spider on a URL
+
+```shell
+$ spider URL [HTTP_AUTH_USER HTTP_AUTH_PASS]
+...
+```
+
 ### `spin_container` - Launch a temp docker container
 
 ```shell

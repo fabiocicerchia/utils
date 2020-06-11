@@ -1,0 +1,10 @@
+#!/bin/sh
+URL=$1
+HTTP_AUTH_USER=$2
+HTTP_AUTH_PASS=$3
+HTTP_AUTH=""
+if [ "$HTTP_AUTH_PASS" != "" ]; then
+    HTTP_AUTH="--http-user=$HTTP_AUTH_USER --http-password=$HTTP_AUTH_PASS"
+fi
+wget --save-headers --no-clobber --recursive --server-response --no-parent $HTTP_AUTH $URL 2>&1 \
+    | awk '/^--/{print $3}/^  HTTP.+ 1.. / {print "\033[34m" $2 "\033[0m" }/^  HTTP.+ 2.. / {print "\033[32m" $2 "\033[0m" }/^  HTTP.+ 3.. / {print "\033[33m" $2 "\033[0m" }/^  HTTP.+ 4.. / {print "\033[35m" $2 "\033[0m" }/^  HTTP.+ 5.. / {print "\033[31m" $2 "\033[0m" }'
