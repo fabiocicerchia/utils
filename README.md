@@ -78,6 +78,25 @@ Validate Links:
 OK|FAIL
 ```
 
+### `dotenv` - Export current env vars in .env file
+
+```shell
+$ eval `dotenv`
+COLORTERM=truecolor
+HOME=/home/user
+LC_CTYPE=UTF-8
+PAGER=less
+PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:PATH=$PATH:/opt/utils-master
+PWD=/
+SHELL=/bin/zsh
+TERM=xterm-256color
+...
+```
+
+```shell
+$ dotenv > /dev/null
+```
+
 ### `expose` - Expose Folder to HTTP port
 
 ```shell

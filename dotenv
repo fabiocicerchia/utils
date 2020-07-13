@@ -1,0 +1,3 @@
+#!/bin/sh
+
+egrep -Ev '^#|^$' $PWD/.env | sed 's/^/export /'
