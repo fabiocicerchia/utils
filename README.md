@@ -15,6 +15,13 @@ wget -O - https://raw.githubusercontent.com/fabiocicerchia/utils/master/installe
 
 ## Tools
 
+### `ago` - File Modification Age
+
+```shell
+$ ago FILE
+3 days, 8:16:14 ago
+```
+
 ### `benchmark` - Benchmark URL
 
 ```shell
@@ -152,6 +159,14 @@ $ mac_random
 $ pdf_compress FILE.PDF
 ```
 
+### `retry` - Repeat Until Success
+
+Runs the command until it exits zero. Without `-n` it retries forever.
+
+```shell
+$ retry [-n MAX] [-d DELAY=5] COMMAND [ARGS...]
+```
+
 ### `server_specs` - Server Specs
 
 ```shell
@@ -191,6 +206,12 @@ $ stealth
 $ timestamp 1234567890
 Fri Feb 13 15:26:30 EST 2009
 ```
+
+## Credits
+
+`ago` and `retry` are independent rewrites of ideas from
+[skx/sysadmin-util](https://github.com/skx/sysadmin-util) (archived, Artistic
+License / GPL-2.0-or-later). No code was copied from it.
 
 ## Notes
 
