@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+
+"""Extract the pending TODO/FIXME/HACK markers left behind in a code base."""
+
+import argparse
+import csv
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+
+# The classic "come back to this later" markers, scanned by default.
+DEFAULT_MARKERS = (
+    "TODO",
+    "FIXME",
+    "HACK",
+    "XXX",
+    "BUG",
+    "KLUDGE",
+    "FIXIT",
+    "WIP",
+    "TBD",
+)
+
+# Softer markers: a NOTE is not necessarily pending work, so these are only
+# scanned with --all, or when asked for explicitly with --marker.
+EXTRA_MARKERS = (
+    "NOTE",
+    "REVIEW",
+    "QUESTION",
+    "OPTIMIZE",
+    "REFACTOR",
+    "DEPRECATED",
+    "TEMP",
+)
+
+# Version control metadata, vendored dependencies and build output: never worth
+# scanning, and big enough to dominate the runtime if they are.
+SKIP_DIRS = frozenset(
+    """
+    .bzr .cache .git .hg .idea .mypy_cache .next .nuxt .pytest_cache .ruff_cache
+    .svn .terraform .tox .venv __pycache__ bower_components build coverage dist
+    node_modules site-packages target vendor venv
+    """.split()
+)
+
+# Extensions that hold no source to review: binaries, media and archives.
+SKIP_EXTS = frozenset(
+    """
+    .7z .a .avi .bin .bmp .bz2 .class .dll .dylib .eot .exe .gif .gz .ico .jar
+    .jpeg .jpg .mo .mov .mp3 .mp4 .o .odt .ogg .otf .pdf .png .pyc .pyd .pyo
+    .rar .so .svgz .tar .tgz .ttf .wasm .webm .webp .whl .woff .woff2 .xz .zip
+    """.split()
+)
+
+# Comment terminators that trail the marker text and are not part of it.
+CLOSERS = ('"""', "'''", "*/", "-->", "--}}", "#}", "}}", "*)", "]]", "?>", "-}")
+
+# `TODO @fabio: ...`, the other half of the `TODO(fabio): ...` convention.
+MENTION_RE = re.compile(r"@([0-9A-Za-z._-]+)\b[ \t]*[:;=,-]?[ \t]*")
+
+# Loudest first: something is broken, something is ugly, something is missing.
+MARKER_COLORS = {
+    "\033[31m": ("FIXME", "BUG", "XXX", "FIXIT"),
+    "\033[33m": ("HACK", "KLUDGE", "WIP", "TBD", "TEMP", "DEPRECATED"),
+    "\033[36m": ("TODO", "REVIEW", "QUESTION"),
+    "\033[32m": ("NOTE", "OPTIMIZE", "REFACTOR"),
+}
+RESET = "\033[0m"
+
+
+# {{{ Function: warn -----------------------------------------------------------
+def warn(message):
+    """Report a non fatal problem without polluting the findings on stdout.
+
+    Keyword arguments:
+    message -- the text to report.
+
+    Return value:
+    None."""
+
+    print("todo_scan: %s" % message, file=sys.stderr)
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: build_regex ----------------------------------------------------
+def build_regex(markers, ignore_case):
+    """Build the regex matching a marker and the note that follows it.
+
+    The marker is anchored on both sides so that TODOS or MYTODO do not match,
+    and the author is picked up from the usual TODO(author) spelling.
+
+    Keyword arguments:
+    markers     -- the marker names to look for.
+    ignore_case -- whether a lowercase todo counts as a marker too.
+
+    Return value:
+    a compiled regex, with the marker, owner and text groups."""
+
+    ordered = sorted(markers, key=len, reverse=True)
+    pattern = (
+        r"(?<![0-9A-Za-z_])"
+        r"(?P<marker>" + "|".join(re.escape(name) for name in ordered) + r")"
+        r"(?![0-9A-Za-z_])"
+        r"(?:[ \t]*\((?P<owner>[^)\n]{1,64})\))?"
+        r"[ \t]*[:;=-]?[ \t]*"
+        r"(?P<text>.*)"
+    )
+
+    return re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: clean_text -----------------------------------------------------
+def clean_text(text):
+    """Strip the comment terminators trailing the text of a marker.
+
+    Keyword arguments:
+    text -- the rest of the line, as matched after the marker.
+
+    Return value:
+    a string, the note left by whoever wrote the marker."""
+
+    text = text.strip()
+    for closer in CLOSERS:
+        if text.endswith(closer):
+            text = text[: -len(closer)].rstrip()
+
+    return text
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: git_files ------------------------------------------------------
+def git_files(root):
+    """List the files git knows about, so that .gitignore is honoured for free.
+
+    Keyword arguments:
+    root -- the directory to list.
+
+    Return value:
+    a list of paths, or None when root is not a git work tree."""
+
+    command = [
+        "git",
+        "-C",
+        root,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+    ]
+
+    try:
+        result = subprocess.run(command, capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    listed = result.stdout.decode("utf-8", "replace").split("\0")
+
+    return [os.path.join(root, name) for name in listed if name]
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: walk_files -----------------------------------------------------
+def walk_files(root, hidden):
+    """Walk a directory, pruning the trees that never hold reviewable source.
+
+    Keyword arguments:
+    root   -- the directory to walk.
+    hidden -- whether to descend into dot directories.
+
+    Return value:
+    an iterator of paths, in a stable order."""
+
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if name not in SKIP_DIRS and (hidden or not name.startswith("."))
+        )
+        for name in sorted(files):
+            yield os.path.join(base, name)
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: matches_any ----------------------------------------------------
+def matches_any(path, patterns):
+    """Check a path against a list of globs, component by component.
+
+    Keyword arguments:
+    path     -- the path to test, relative to the scanned root.
+    patterns -- the globs to test it against.
+
+    Return value:
+    a boolean, True when any glob matches."""
+
+    candidates = [path, os.path.basename(path)] + path.split(os.sep)
+
+    return any(
+        fnmatch.fnmatch(candidate, pattern)
+        for pattern in patterns
+        for candidate in candidates
+    )
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: keep -----------------------------------------------------------
+def keep(path, root, opts):
+    """Decide whether a candidate file is worth opening.
+
+    Keyword arguments:
+    path -- the candidate file.
+    root -- the directory the scan started from.
+    opts -- the parsed command line options.
+
+    Return value:
+    a boolean, True when the file should be scanned."""
+
+    relative = os.path.relpath(path, root)
+    parts = [part for part in relative.split(os.sep) if part not in (".", "..")]
+
+    if any(part in SKIP_DIRS for part in parts):
+        return False
+
+    if not opts.hidden and any(part.startswith(".") for part in parts):
+        return False
+
+    if os.path.splitext(path)[1].lower() in SKIP_EXTS:
+        return False
+
+    if opts.include and not matches_any(relative, opts.include):
+        return False
+
+    return not (opts.exclude and matches_any(relative, opts.exclude))
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: collect_files --------------------------------------------------
+def collect_files(paths, opts):
+    """Expand the command line arguments into the list of files to scan.
+
+    A file named on the command line is scanned as asked, without any filter: a
+    directory is listed through git when possible, and walked otherwise.
+
+    Keyword arguments:
+    paths -- the files and directories named on the command line.
+    opts  -- the parsed command line options.
+
+    Return value:
+    a tuple, the sorted paths and whether an argument could not be read."""
+
+    found = []
+    failed = False
+
+    for path in paths:
+        if os.path.isfile(path):
+            found.append(path)
+        elif os.path.isdir(path):
+            listing = git_files(path) if opts.git else None
+            if listing is None:
+                listing = walk_files(path, opts.hidden)
+            found.extend(name for name in listing if keep(name, path, opts))
+        else:
+            warn("%s: no such file or directory" % path)
+            failed = True
+
+    return sorted(set(found)), failed
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: first_match ----------------------------------------------------
+def first_match(line, regex):
+    """Find the first real marker on a line, skipping the ones in quotes.
+
+    A marker quoted on its own is a marker name being handled by code, as in the
+    table at the top of this very file, rather than a note somebody left behind.
+
+    Keyword arguments:
+    line  -- the line to look at.
+    regex -- the marker regex, as built by build_regex.
+
+    Return value:
+    a match, or None when the line holds nothing pending."""
+
+    for match in regex.finditer(line):
+        start, end = match.span("marker")
+        if start > 0 and end < len(line):
+            if line[start - 1] in "\"'" and line[end] == line[start - 1]:
+                continue
+
+        return match
+
+    return None
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: scan_file ------------------------------------------------------
+def scan_file(path, regex, max_size):
+    """Read a file and report every marker found in it, at most one per line.
+
+    Keyword arguments:
+    path     -- the file to scan.
+    regex    -- the marker regex, as built by build_regex.
+    max_size -- the size above which a file is skipped, in bytes.
+
+    Return value:
+    an iterator of findings, as dictionaries."""
+
+    try:
+        with open(path, "rb") as handle:
+            blob = handle.read(max_size + 1)
+    except OSError as error:
+        warn("%s: %s" % (path, error.strerror or error))
+        return
+
+    # A file over the limit is a data dump, and a NUL byte means a binary the
+    # extension list did not catch: neither is code somebody left a note in.
+    if len(blob) > max_size or b"\0" in blob:
+        return
+
+    for number, line in enumerate(blob.decode("utf-8", "replace").splitlines(), 1):
+        match = first_match(line, regex)
+        if match is None:
+            continue
+
+        owner = match.group("owner")
+        text = clean_text(match.group("text"))
+
+        if owner is None:
+            mention = MENTION_RE.match(text)
+            if mention is not None:
+                owner = mention.group(1)
+                text = text[mention.end() :]
+
+        yield {
+            "path": path,
+            "line": number,
+            "column": match.start("marker") + 1,
+            "marker": match.group("marker").upper(),
+            "owner": owner.strip() if owner else "",
+            "text": text,
+            "source": line.strip(),
+        }
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: colorize -------------------------------------------------------
+def colorize(marker, enabled):
+    """Paint a marker by how loudly it asks to be dealt with.
+
+    Keyword arguments:
+    marker  -- the marker name.
+    enabled -- whether colour is wanted at all.
+
+    Return value:
+    a string, the marker as it should be printed."""
+
+    if not enabled:
+        return marker
+
+    for color, names in MARKER_COLORS.items():
+        if marker in names:
+            return "%s%s%s" % (color, marker, RESET)
+
+    return marker
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: report_text ----------------------------------------------------
+def report_text(findings, color):
+    """Print the findings as grep would, one per line, path first.
+
+    Keyword arguments:
+    findings -- the findings to print.
+    color    -- whether to paint the markers.
+
+    Return value:
+    None."""
+
+    for finding in findings:
+        marker = colorize(finding["marker"], color)
+        if finding["owner"]:
+            marker = "%s(%s)" % (marker, finding["owner"])
+        line = "%s:%d: %s %s" % (
+            finding["path"],
+            finding["line"],
+            marker,
+            finding["text"],
+        )
+        print(line.rstrip())
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: report_csv -----------------------------------------------------
+def report_csv(findings):
+    """Print the findings as CSV, for a spreadsheet or a ticket importer.
+
+    Keyword arguments:
+    findings -- the findings to print.
+
+    Return value:
+    None."""
+
+    columns = ["path", "line", "column", "marker", "owner", "text"]
+    writer = csv.writer(sys.stdout, lineterminator="\n")
+    writer.writerow(columns)
+    for finding in findings:
+        writer.writerow([finding[column] for column in columns])
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: report_summary -------------------------------------------------
+def report_summary(counts, total):
+    """Print how many of each marker were found, the worst offender first.
+
+    Keyword arguments:
+    counts -- the number of findings per marker.
+    total  -- the number of findings overall.
+
+    Return value:
+    None."""
+
+    for marker, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        print("%-12s %d" % (marker, count))
+    print("%-12s %d" % ("TOTAL", total))
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: parse_args -----------------------------------------------------
+def parse_args(argv):
+    """Describe and parse the command line.
+
+    Keyword arguments:
+    argv -- the arguments to parse, without the program name.
+
+    Return value:
+    a namespace, the parsed options."""
+
+    parser = argparse.ArgumentParser(
+        prog="todo_scan",
+        description="Extract the pending TODO/FIXME/HACK markers from a code base.",
+        epilog="exit status: 0 on a clean run, 1 when --strict finds a marker, "
+        "2 on a usage error. Scanned by default: "
+        + ", ".join(DEFAULT_MARKERS)
+        + ". Added by --all: "
+        + ", ".join(EXTRA_MARKERS)
+        + ".",
+    )
+
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        default=["."],
+        metavar="PATH",
+        help="files or directories to scan (default: the current directory)",
+    )
+    parser.add_argument(
+        "-m",
+        "--marker",
+        action="append",
+        metavar="LIST",
+        help="comma separated markers to look for, replacing the default set",
+    )
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="also look for the softer markers (NOTE, REVIEW, OPTIMIZE, ...)",
+    )
+    parser.add_argument(
+        "-i",
+        "--ignore-case",
+        action="store_true",
+        help="match lowercase markers as well",
+    )
+    parser.add_argument(
+        "-o",
+        "--owner",
+        metavar="NAME",
+        help="only report markers tagged TODO(NAME) or TODO @NAME",
+    )
+    parser.add_argument(
+        "-e",
+        "--exclude",
+        action="append",
+        metavar="GLOB",
+        help="skip the paths matching GLOB (repeatable)",
+    )
+    parser.add_argument(
+        "-I",
+        "--include",
+        action="append",
+        metavar="GLOB",
+        help="only scan the paths matching GLOB (repeatable)",
+    )
+    parser.add_argument(
+        "-H",
+        "--hidden",
+        action="store_true",
+        help="descend into dot files and dot directories",
+    )
+    parser.add_argument(
+        "--no-git",
+        dest="git",
+        action="store_false",
+        help="walk the directories instead of asking git, ignoring .gitignore",
+    )
+    parser.add_argument(
+        "--max-size",
+        type=int,
+        default=1024 * 1024,
+        metavar="BYTES",
+        help="skip the files bigger than this (default: 1048576)",
+    )
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["text", "json", "csv"],
+        default="text",
+        help="how to print the findings (default: text)",
+    )
+    parser.add_argument(
+        "-s",
+        "--summary",
+        action="store_true",
+        help="print the count per marker instead of the findings",
+    )
+    parser.add_argument(
+        "-l",
+        "--files",
+        action="store_true",
+        help="print the names of the files holding a marker, nothing else",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="drop the trailing count printed on stderr",
+    )
+    parser.add_argument(
+        "--color",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="colour the markers (default: auto, when stdout is a terminal)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 when a marker is found, to gate a build on it",
+    )
+
+    return parser.parse_args(argv)
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: wanted_markers -------------------------------------------------
+def wanted_markers(opts):
+    """Work out which markers to look for.
+
+    Keyword arguments:
+    opts -- the parsed command line options.
+
+    Return value:
+    a set of marker names, uppercased."""
+
+    if opts.marker:
+        listed = ",".join(opts.marker).replace(" ", ",").split(",")
+        return {name.upper() for name in listed if name}
+
+    markers = set(DEFAULT_MARKERS)
+    if opts.all:
+        markers.update(EXTRA_MARKERS)
+
+    return markers
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# {{{ Function: main -----------------------------------------------------------
+def main(argv):
+    """Scan the requested paths and report what is still pending.
+
+    Keyword arguments:
+    argv -- the arguments to parse, without the program name.
+
+    Return value:
+    an integer, the exit status."""
+
+    opts = parse_args(argv)
+
+    markers = wanted_markers(opts)
+    if not markers:
+        warn("no marker to look for")
+        return 2
+
+    regex = build_regex(markers, opts.ignore_case)
+    owner = opts.owner.lower() if opts.owner else None
+
+    findings = []
+    files, failed = collect_files(opts.paths, opts)
+    for path in files:
+        for finding in scan_file(path, regex, opts.max_size):
+            if owner is not None and finding["owner"].lower() != owner:
+                continue
+            findings.append(finding)
+
+    counts = {}
+    for finding in findings:
+        counts[finding["marker"]] = counts.get(finding["marker"], 0) + 1
+
+    color = opts.color == "always" or (opts.color == "auto" and sys.stdout.isatty())
+
+    if opts.summary:
+        report_summary(counts, len(findings))
+    elif opts.files:
+        seen = []
+        for finding in findings:
+            if finding["path"] not in seen:
+                seen.append(finding["path"])
+                print(finding["path"])
+    elif opts.format == "json":
+        json.dump(findings, sys.stdout, indent=2)
+        print()
+    elif opts.format == "csv":
+        report_csv(findings)
+    else:
+        report_text(findings, color)
+
+    # The count goes to stderr so that the findings on stdout stay pipeable.
+    if not opts.quiet and not opts.summary:
+        files = len({finding["path"] for finding in findings})
+        warn("%d marker(s) in %d file(s)" % (len(findings), files))
+
+    if failed:
+        return 2
+
+    return 1 if opts.strict and findings else 0
+
+
+# }}} --------------------------------------------------------------------------
+
+
+# Main -------------------------------------------------------------------------
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        # `todo_scan | head` closes the pipe early, which is not an error.
+        os._exit(0)
+    except KeyboardInterrupt:
+        sys.exit(130)

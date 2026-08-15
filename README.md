@@ -207,6 +207,51 @@ $ timestamp 1234567890
 Fri Feb 13 15:26:30 EST 2009
 ```
 
+### `todo_scan` - Pending Code Markers
+
+Finds the `TODO`, `FIXME`, `HACK`, `XXX`, `BUG`, `KLUDGE`, `FIXIT`, `WIP` and
+`TBD` markers left behind in a code base. `--all` adds the softer ones (`NOTE`,
+`REVIEW`, `QUESTION`, `OPTIMIZE`, `REFACTOR`, `DEPRECATED`, `TEMP`).
+
+Inside a git work tree the file list comes from git, so `.gitignore` is honoured
+and vendored dependencies stay out of the report. Binaries, build output and
+dot directories are skipped as well.
+
+```shell
+$ todo_scan [PATH...]
+src/api.py:42: TODO wire up the retry budget
+src/api.py:87: FIXME(fabio) off-by-one on the last page
+src/cache.go:13: HACK sleep until the socket settles
+todo_scan: 3 marker(s) in 2 file(s)
+```
+
+The count goes to stderr, so the findings stay pipeable. Markers are reported
+with the author when written as `TODO(fabio):` or `TODO @fabio:`, and `--owner`
+keeps only theirs:
+
+```shell
+$ todo_scan --owner fabio
+src/api.py:87: FIXME(fabio) off-by-one on the last page
+```
+
+Counts per marker, rather than the findings themselves:
+
+```shell
+$ todo_scan --summary
+TODO         12
+FIXME        4
+HACK         1
+TOTAL        17
+```
+
+`--format json` and `--format csv` print the same findings for a ticket
+importer, `--files` lists only the file names, and `--strict` exits `1` as soon
+as a marker is found, to gate a build on it:
+
+```shell
+$ todo_scan --strict --marker FIXME,XXX src || echo "unfinished business"
+```
+
 ## Credits
 
 `ago` and `retry` are independent rewrites of ideas from
