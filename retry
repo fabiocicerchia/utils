@@ -1,0 +1,21 @@
+#!/bin/sh
+# retry [-n MAX] [-d DELAY] COMMAND...
+MAX=0
+DELAY=5
+while getopts n:d: OPT; do
+    case $OPT in
+        n) MAX=$OPTARG ;;
+        d) DELAY=$OPTARG ;;
+        *) echo "usage: retry [-n MAX] [-d DELAY] COMMAND..." >&2; exit 2 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+N=1
+until "$@"; do
+    if [ "$MAX" -gt 0 ] && [ "$N" -ge "$MAX" ]; then
+        exit 1
+    fi
+    N=$((N + 1))
+    sleep "$DELAY"
+done
