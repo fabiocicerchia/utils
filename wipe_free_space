@@ -1,0 +1,104 @@
+#!/bin/sh
+# wipe_free_space - overwrite the free space on a filesystem.
+#
+# Originally https://github.com/fabiocicerchia/wipe-free-space (2020-02-20),
+# archived and folded in here. Idea from David Spillett's answer at
+# https://superuser.com/a/19488.
+#
+# Meaningful on spinning disks with no full-disk encryption; close to useless on
+# SSDs, on anything encrypted, on btrfs/ZFS and on cloud volumes. See the README
+# for which case you are in before running it.
+#
+# POSIX sh, deliberately: free space is most often wiped inside a minimal
+# container image, and those ship busybox ash rather than bash. `function`,
+# `(( ))` and `${var// /x}` are bash syntax that ash cannot even parse, so the
+# script died on a syntax error at line 42 before wiping anything.
+
+ROUNDS=1
+SOURCE=/dev/zero
+PID=
+
+while getopts ":hsr:" opt; do
+    case ${opt} in
+        h )
+            echo "wipe_free_space"
+            echo "(C) 2020 Fabio Cicerchia."
+            echo ""
+            echo "Usage:"
+            echo "$0 [-r X] [-s]"
+            echo "  -r X   Number of rounds"
+            echo "  -s     Secure way (uses random instead of zero fillings)"
+            exit 0
+            ;;
+        s )
+            SOURCE=/dev/urandom
+            ;;
+        r )
+            ROUNDS=$OPTARG
+            ;;
+        \? )
+            echo "Unknown option: -$OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+
+sighdl() {
+    echo "*** SIGNAL CAUGHT ***"
+    # -n, not -gt: PID is empty until the first round starts, and `[ -gt 0 ]`
+    # is a syntax error rather than a false.
+    if [ -n "$PID" ]; then
+        kill -9 "$PID" 2>/dev/null
+    fi
+    exit 0
+}
+# INT/TERM without the SIG prefix: that spelling is the portable one.
+trap sighdl INT TERM
+
+progress_bar() {
+    _progress=$(( ($1 * 100 / $2 * 100) / 100 ))
+    _done=$(( (_progress * 4) / 10 ))
+    _left=$(( 40 - _done ))
+
+    # tr rather than ${_fill// /#}: pattern substitution is a bash extension,
+    # and busybox only has it when compiled in.
+    _fill=$(printf "%${_done}s" | tr ' ' '#')
+    _empty=$(printf "%${_left}s" | tr ' ' '-')
+
+    # The bar goes through printf's arguments, never its format string: a `%`
+    # arriving in the data would otherwise be read as a conversion.
+    printf '\rProgress : [%s%s] %s%%' "$_fill" "$_empty" "$_progress"
+}
+
+echo "Wiping..."
+
+i=1
+while [ "$i" -le "$ROUNDS" ]; do
+    echo "ROUND #$i / $ROUNDS"
+
+    dd if=$SOURCE of=x.small.file bs=1024 count=102400
+    shred -vz x.small.file
+
+    _end=$(df -k . | tail -n1 | awk '{print $4}') # FREE SPACE ON DISK
+    cat $SOURCE > x.file 2> /dev/null &
+    PID=$!
+    sleep 0.5
+    # `kill -0` rather than `ps -p`: busybox ps has no -p, so the old test
+    # counted the lines of an error message and left the loop immediately.
+    while kill -0 "$PID" 2>/dev/null; do
+        _current=$(du -k x.file | cut -f1)
+        progress_bar "${_current}" "${_end}"
+        sleep 0.5
+    done
+    echo
+
+    sync
+    rm x.small.file
+    shred -vz x.file
+    sync
+    rm x.file
+
+    i=$((i + 1))
+done
+
+echo "Done"
