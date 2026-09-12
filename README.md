@@ -252,11 +252,47 @@ as a marker is found, to gate a build on it:
 $ todo_scan --strict --marker FIXME,XXX src || echo "unfinished business"
 ```
 
+### `wipe_free_space` - Overwrite Free Disk Space
+
+Fills the filesystem with a large file and deletes it, so the blocks freed by
+previously deleted files get overwritten. POSIX `sh`, so it runs under busybox
+`ash` as well as bash — free space usually needs wiping inside a minimal
+container image, which is where bash is not.
+
+```shell
+$ wipe_free_space [-r X] [-s]
+  -r X   Number of rounds
+  -s     Secure way (uses random instead of zero fillings)
+Wiping...
+ROUND #1 / 1
+Progress : [########################################] 100%
+Done
+```
+
+This fills the disk to 100% by design, so do not run it on a live system that
+still needs to write anything.
+
+It is also only meaningful on **spinning disks with no full-disk encryption**.
+On an SSD the flash translation layer writes to fresh erase blocks and leaves
+the old pages untouched in over-provisioned capacity you cannot address; under
+LUKS/BitLocker the free blocks are already unreadable ciphertext; on btrfs/ZFS
+copy-on-write allocates elsewhere and snapshots keep the old data referenced;
+on a cloud volume the data lives in the snapshot chain and filling the guest
+just inflates a thin-provisioned disk you then pay for. In those cases use
+`fstrim -av`, `blkdiscard`, `nvme format --ses=1`, `cryptsetup luksErase`, or
+delete the snapshots — not this.
+
 ## Credits
 
 `ago` and `retry` are independent rewrites of ideas from
 [skx/sysadmin-util](https://github.com/skx/sysadmin-util) (archived, Artistic
 License / GPL-2.0-or-later). No code was copied from it.
+
+`wipe_free_space` started life as
+[fabiocicerchia/wipe-free-space](https://github.com/fabiocicerchia/wipe-free-space)
+on 2020-02-20 (MIT), now archived and folded in here. The idea is from
+[David Spillett](https://superuser.com/users/4129/david-spillett)'s answer to
+[How to wipe free disk space in Linux?](https://superuser.com/a/19488).
 
 ## Notes
 
