@@ -1,0 +1,21 @@
+# Backstage catalog entry, read by paved's scorecard plugin.
+#
+# Every check paved scores is derived from this file alone — no cluster
+# access, no CI credentials. What is absent here is absent from the score.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: utils
+  description: >-
+      Bunch of utilities to make the dev life easier!
+  annotations:
+    github.com/project-slug: fabiocicerchia/utils
+    backstage.io/source-location: url:https://github.com/fabiocicerchia/utils/
+  links:
+    - url: https://github.com/fabiocicerchia/utils
+      title: Source
+spec:
+  type: library
+  lifecycle: production
+  owner: group:default/kodebeat
+  system: oss-tools
